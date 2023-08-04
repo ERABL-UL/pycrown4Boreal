@@ -1,0 +1,58 @@
+= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+= = = = Adaptation de l'algorithme "PyCrown - Fast raster-based individual tree segmentation for LiDAR data" pour nos besoins = = = =
+= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+
+LÉGENDE:
+ [+] indique que l'élément a été ajouté
+ [-] indique que l'élément a été modifié
+ [=] indique que l'élément était déjà là et N'A PAS été modifié mais vaut la peine d'être expliqué à des fins de compréhension
+ [def] Le terme qui suit est le nom de la fonction qui exécute les tâches listées
+
+= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+
++ Tout mettre l'algorithme dans une for loop pour avoir la segmentation de chaque parcelle de 20x20 mètres;
+
++ Création DTM et DSM pour l'obtention des CHM:
+	+­­­­­­ L'integrer dans la for loop pour avoir le CHM de chaque parcelle;
+	+ Utiliser tous les points pour le DSM;
+	+ Utiliser seulement les points du sol pour le DTM;
+	+ CHM = DSM - DTM.
+
+- Trouver les sommets des arbres dans la parcelle:
+	- Trouver les maximums pour chaque ws (window screen, qui est fait un noyau qui glisse sur le CHM) de 3x3 pixels dans le CHM (diminué de 5x5 à 3x3 parce que la parcelles n'est que de 20x20 et ce n'est pas tous les sommets qui se faisaient identifier);
+	- La hauteur minimale d'un sommet est de 2 mètres. Auparavant à 20 mètres, ce qui est beaucoup trop. 2 mètres est bon vu que ca trouve les petits arbres aussi;
+	= On trouve le centre de masse de deux sommets si le même sommet est trouvé côte-à-côte plusieurs fois.
+	
+- Utilisation de dalponteCIRC_numba pour la création des couronnes d'arbres:
+	- Definition: "Crown delineation based on Dalponte and Coomes (2016) and lidR R-package (https://github.com/Jean-Romain/lidR/). In contrast to the moving window growing scheme from the original algorithm this code implements a circular region growing around the tree top which leads to smoother crown patterns and speeds up the calculation by one order of magnitude";
+	- Prend en entrée les paramètres suivant:
+		= CHM: on sé c koi;
+		= Trees: Coord des sommets des arbres trouvés, nx2;
+		= th_tree: Mis à la valeur de 2. Threshold below which a pixel cannot be a tree. Default 2;
+		- th_seed: Valeur était à 0.45, modifié à 0.4
+		  "Growing threshold 1. A pixel is added to a region if its height is greater than the tree height multiplied by this value. It should be between 0 and 1. Default 0.45";
+		- th_crown: Valeur était à 0.55, modifié à 0.5
+		  "Growing threshold 2. A pixel is added to a region if its height is greater than the current mean height of the region multiplied by this value. It should be between 0 and 1. Default 0.55.";
+		= max_crown: Laissé à la valeur de 10. "Maximum value of the crown diameter of a detected tree (in pixels). Default 10".
+		
+	- En somme, j'ai diminué les thresholds th_seed et th_crown parce que les couronnes des arbres étaient trop petites avec les valeurs par défaut. PyCrown était utilisé pour des arbres feuillus, grands et assez étroits.
+		
+- Enlever les arbres qui sont de moins de 5 mètres de hauteur (paramètre auparavant établi à 20m). Les couronnes sont mises à jour par la suite. (def screen_small_trees)
+= Changer les couronnes raster en polygones rasters individuels (def crowns_to_polys_raster):
+	= Utilise l'outil "shapes" dans le package "rasterio.feature" (installé avec pip, ça n'a pas rapport avec PyCrown).
+	
+- "Smooth crown polygons using Dalponte & Coomes (2016) approach: Builds a convex hull around first return points (which lie within the rasterized crowns). Optionally, the trees in the LiDAR point cloud are classified based on the generated convex hull" (def crowns_to_polys_smooth):
+	- J'ai modifié pour que le fichier de nuage de point se cré toujours. C'EST DANS CETTE FONCTION QUE LES FICHIERS DE NUAGES SONT CRÉÉS;
+	= Converti le nuage de points en points Shapely;
+	- Converti les polygones rasters en polygones Shapely. J'ai modifié ça un peu parce que les y des polygones étaient multipliés par -1... Le nuage de points correspondait jamais à aucun polygone. Pas vraiment la peine de le mentionné, mais je l'écris ici pareil là là;
+	= Chaque polygone est ajouté au lot de polygones et on regroupe les points du nuage qui appartiennent au même polygone... le but d'une segmentation tsé;
+	= Pour chaque polygone, on prend les points qu'il contient pour créer un nouveau polygone qui suit le contour de ces points. Le polygone est donc lissé et ça cré un masque pour l'attribution d'un index (ou d'un pouce... héhéhé) à chaque arbre segmenté;
+	- Pour l'écriture comme tel des fichiers, je l'ai laissé en .las parce que Reza les voulait en .ply. J'ai ajouté les points de sols à chaque nuage de points final segmenté pour pas juste avoir les arbres. 
+	
+
+
+
+
+
+
+
