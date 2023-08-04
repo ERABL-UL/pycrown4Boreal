@@ -4,7 +4,7 @@ PyCrown - Fast raster-based individual tree segmentation for LiDAR data
 Copyright: 2018, Jan Zörner
 Licence: GNU GPLv3
 """
-
+import os
 import time
 import platform
 import warnings
@@ -121,7 +121,7 @@ class PyCrown:
         except RuntimeError as e:
             raise IOError(e)
         proj = osr.SpatialReference(wkt=chm_gdal.GetProjection())
-        self.epsg = int(proj.GetAttrValue('AUTHORITY', 1))
+        self.epsg = 4326#int(proj.GetAttrValue('AUTHORITY', 1))
         self.srs = from_epsg(self.epsg)
         self.geotransform = chm_gdal.GetGeoTransform()
         self.resolution = abs(self.geotransform[-1])
@@ -205,7 +205,10 @@ class PyCrown:
             raises Exception if no trees present
         """
         if self.trees.empty:
-            raise NoTreesException
+            return 0
+            #raise NoTreesException
+        else:
+            return 1
 
     def _to_lonlat(self, pix_x, pix_y, resolution):
         ''' Convert pixel coordinates to longitude/latitude
@@ -529,7 +532,7 @@ class PyCrown:
         self.tree_markers, num_objects = ndimage.label(tree_maxima)
 
         if num_objects == 0:
-            raise NoTreesException
+            return 0
 
         # if canopy height is the same for multiple pixels,
         # place the tree top in the center of mass of the pixel bounds
@@ -550,7 +553,7 @@ class PyCrown:
                               dtype='object', columns=['top_cor', 'top'])
             self.trees = self.trees.append(df)
 
-        self._check_empty()
+        return self._check_empty()
 
     def crown_delineation(self, algorithm, loc='top', **kwargs):
         """ Function calling external crown delineation algorithms
@@ -654,6 +657,7 @@ class PyCrown:
         loc :      str, optional
                    tree seed position: `top` or `top_cor`
         """
+
         if bbox:
             lon_min, lon_max, lat_min, lat_max = bbox
         elif inbuf:
@@ -754,8 +758,9 @@ class PyCrown:
                     self.trees.tt_corrected.iloc[tidx] = 2
 
                 # Set new tree top height
-                self.trees.top_cor.iloc[tidx] = \
-                    Point(*self._to_lonlat(cor_col, cor_row, self.resolution))
+                variableTempo = Point(*self._to_lonlat(cor_col, cor_row, self.resolution))
+                self.trees.top_cor[tidx] = \
+                	Point(*self._to_lonlat(cor_col, cor_row, self.resolution))
 
             else:
                 self.trees.tt_corrected.iloc[tidx] = 0
@@ -784,7 +789,7 @@ class PyCrown:
         if isinstance(self.crowns, np.ndarray):
             self._screen_crowns(cond)
 
-        self._check_empty()
+        return self._check_empty()
 
     def crowns_to_polys_raster(self):
         ''' Converts tree crown raster to individual polygons and stores them
@@ -802,8 +807,7 @@ class PyCrown:
             polys.append(Polygon(edges))
         self.trees.crown_poly_raster = polys
 
-    def crowns_to_polys_smooth(self, store_las=True, thin_perc=None,
-                               first_return=True):
+    def crowns_to_polys_smooth(self, last_folder, tree_las_name, F_LAS_GROUND, store_las=True, thin_perc=None, first_return=False):
         """ Smooth crown polygons using Dalponte & Coomes (2016) approach:
         Builds a convex hull around first return points (which lie within the
         rasterized crowns).
@@ -833,13 +837,14 @@ class PyCrown:
         geometry = [Point(xy) for xy in zip(lidar_geodf.x, lidar_geodf.y)]
         lidar_geodf = gpd.GeoDataFrame(lidar_geodf, crs=f'epsg:{self.epsg}',
                                        geometry=geometry)
-
+        
         print('Converting raster crowns to shapely polygons')
         polys = []
         for feature in rioshapes(self.crowns, mask=self.crowns.astype(bool)):
             edges = np.array(list(zip(*feature[0]['coordinates'][0])))
             edges = np.array(self._to_lonlat(edges[0], edges[1],
                                              self.resolution)).T
+            edges[:,1] *= -1
             polys.append(Polygon(edges))
         crown_geodf = gpd.GeoDataFrame(
             pd.DataFrame(np.arange(len(self.trees))),
@@ -849,11 +854,13 @@ class PyCrown:
         print('Attach LiDAR points to corresponding crowns')
         lidar_in_crowns = gpd.sjoin(lidar_geodf, crown_geodf,
                                     op='within', how="inner")
+        #print(lidar_geodf)   #OKAY
+        #print(np.array(crown_geodf.exterior[0].coords))   #OKAY
+
 
         lidar_tree_class = np.zeros(lidar_in_crowns['index_right'].size)
-        lidar_tree_mask = np.zeros(lidar_in_crowns['index_right'].size,
-                                   dtype=bool)
-
+        lidar_tree_mask = np.zeros(lidar_in_crowns['index_right'].size, dtype=bool)
+        
         print('Create convex hull around first return points')
         polys = []
         for tidx in range(len(self.trees)):
@@ -863,34 +870,38 @@ class PyCrown:
             # check that not all values are the same
             if len(points.z) > 1 and not np.allclose(points.z,
                                                      points.iloc[0].z):
-                points = points[points.z >= threshold_otsu(points.z)]
+                #points = points[points.z >= threshold_otsu(points.z)]
                 if first_return:
                     points = points[points.return_num == 1]  # first returns
+
             hull = points.unary_union.convex_hull
             polys.append(hull)
-            lidar_tree_mask[bool_indices] = \
-                lidar_in_crowns[bool_indices].within(hull)
+            lidar_tree_mask[bool_indices] = lidar_in_crowns[bool_indices].within(hull)
+        
         self.trees.crown_poly_smooth = polys
 
         if store_las:
             print('Classifying point cloud')
             lidar_in_crowns = lidar_in_crowns[lidar_tree_mask]
             lidar_tree_class = lidar_tree_class[lidar_tree_mask]
-            header = laspy.header.Header()
+            header = laspy.header.LasHeader()
             self.outpath.mkdir(parents=True, exist_ok=True)
-            outfile = laspy.file.File(
-                self.outpath / "trees.las", mode="w", header=header
-            )
+            directory = "{}/{}".format(self.outpath, last_folder)
+            if not os.path.exists(directory):
+            	os.makedirs(directory)
+            outfile = laspy.LasData(header)
+            #outfile = laspy.file.File(self.outpath / "trees.las", mode="w", header=header)
             xmin = np.floor(np.min(lidar_in_crowns.x))
             ymin = np.floor(np.min(lidar_in_crowns.y))
             zmin = np.floor(np.min(lidar_in_crowns.z))
             outfile.header.offset = [xmin, ymin, zmin]
             outfile.header.scale = [0.001, 0.001, 0.001]
-            outfile.x = lidar_in_crowns.x
-            outfile.y = lidar_in_crowns.y
-            outfile.z = lidar_in_crowns.z
-            outfile.intensity = lidar_tree_class
-            outfile.close()
+            outfile.x = np.hstack((lidar_in_crowns.x, F_LAS_GROUND.x))
+            outfile.y = np.hstack((lidar_in_crowns.y, F_LAS_GROUND.y))
+            outfile.z = np.hstack((lidar_in_crowns.z, F_LAS_GROUND.z))
+            outfile.classification = np.hstack((lidar_tree_class, F_LAS_GROUND.classif))
+            outfile.write("{}/{}".format(directory, tree_las_name))
+            #outfile.close()
 
         self.lidar_in_crowns = lidar_in_crowns
 
@@ -913,7 +924,7 @@ class PyCrown:
             )
             self.trees = self.trees[cond]
 
-        self._check_empty()
+        return self._check_empty()
 
     def export_tree_locations(self, loc='top'):
         """ Convert tree top raster indices to georeferenced 3D point shapefile
@@ -967,12 +978,13 @@ class PyCrown:
             'properties': {'DN': 'int', 'TTH': 'float', 'TCH': 'float'}
         }
         with fiona.collection(
-            str(outfile), 'w', 'ESRI Shapefile',
-            schema, crs=self.srs
-        ) as output:
+        	str(outfile), 'w', 'ESRI Shapefile', schema, crs=self.srs
+        	) as output:
+        	
             for tidx in range(len(self.trees)):
                 feat = {}
                 tree = self.trees.iloc[tidx]
+                if tree[crowntype].is_empty : continue
                 feat['geometry'] = mapping(tree[crowntype])
                 feat['properties'] = {
                     'DN': tidx,
