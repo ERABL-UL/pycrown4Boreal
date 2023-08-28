@@ -21,7 +21,7 @@ import scipy.ndimage as ndimage
 import scipy.ndimage.filters as filters
 from scipy.spatial.distance import cdist
 
-from skimage.morphology import watershed
+from skimage.segmentation import watershed
 from skimage.filters import threshold_otsu
 # from skimage.feature import peak_local_max
 
@@ -36,6 +36,9 @@ import fiona
 from fiona.crs import from_epsg
 
 import laspy
+
+#to save ply :
+import OSToolBox as ost
 
 try:
     from pycrown import _crown_dalponte_cython
@@ -807,7 +810,7 @@ class PyCrown:
             polys.append(Polygon(edges))
         self.trees.crown_poly_raster = polys
 
-    def crowns_to_polys_smooth(self, last_folder, tree_las_name, F_LAS_GROUND, store_las=True, thin_perc=None, first_return=False):
+    def crowns_to_polys_smooth(self, last_folder, tree_las_name, F_LAS_GROUND, store_las=False, store_ply=True, offset_point_clouds=False, thin_perc=None, first_return=False):
         """ Smooth crown polygons using Dalponte & Coomes (2016) approach:
         Builds a convex hull around first return points (which lie within the
         rasterized crowns).
@@ -891,17 +894,58 @@ class PyCrown:
             	os.makedirs(directory)
             outfile = laspy.LasData(header)
             #outfile = laspy.file.File(self.outpath / "trees.las", mode="w", header=header)
-            xmin = np.floor(np.min(lidar_in_crowns.x))
-            ymin = np.floor(np.min(lidar_in_crowns.y))
-            zmin = np.floor(np.min(lidar_in_crowns.z))
-            outfile.header.offset = [xmin, ymin, zmin]
+            if offset_point_clouds:
+                xmin = np.floor(np.min(lidar_in_crowns.x))
+                ymin = np.floor(np.min(lidar_in_crowns.y))
+                zmin = np.floor(np.min(lidar_in_crowns.z))
+                outfile.header.offset = [xmin, ymin, zmin]
+                outfile.x = np.hstack((lidar_in_crowns.x, F_LAS_GROUND.x))-xmin
+                outfile.y = np.hstack((lidar_in_crowns.y, F_LAS_GROUND.y))-ymin
+                outfile.z = np.hstack((lidar_in_crowns.z, F_LAS_GROUND.z))-zmin
+            else : 
+                outfile.header.offset = [0,0,0]
+                outfile.x = np.hstack((lidar_in_crowns.x, F_LAS_GROUND.x))
+                outfile.y = np.hstack((lidar_in_crowns.y, F_LAS_GROUND.y))
+                outfile.z = np.hstack((lidar_in_crowns.z, F_LAS_GROUND.z))
+                
             outfile.header.scale = [0.001, 0.001, 0.001]
-            outfile.x = np.hstack((lidar_in_crowns.x, F_LAS_GROUND.x))
-            outfile.y = np.hstack((lidar_in_crowns.y, F_LAS_GROUND.y))
-            outfile.z = np.hstack((lidar_in_crowns.z, F_LAS_GROUND.z))
-            outfile.classification = np.hstack((lidar_tree_class, F_LAS_GROUND.classif))
+            outfile.classification = np.hstack((lidar_tree_class+1, F_LAS_GROUND.classif))
             outfile.write("{}/{}".format(directory, tree_las_name))
             #outfile.close()
+        
+            #store as ply
+        if store_ply:
+            print('saving as PLY point cloud')
+            lidar_in_crowns = lidar_in_crowns[lidar_tree_mask]
+            lidar_tree_class = lidar_tree_class[lidar_tree_mask]
+            self.outpath.mkdir(parents=True, exist_ok=True)
+            directory = "{}/{}".format(self.outpath, last_folder)
+            if not os.path.exists(directory):
+            	os.makedirs(directory)
+            #outfile = laspy.file.File(self.outpath / "trees.las", mode="w", header=header)
+            if offset_point_clouds:
+                xmin = np.floor(np.min(lidar_in_crowns.x))
+                ymin = np.floor(np.min(lidar_in_crowns.y))
+                zmin = np.floor(np.min(lidar_in_crowns.z))
+                offset = "offset "+str(xmin)+" "+str(ymin)+" "+str(zmin)
+                comments=[offset]
+                x = np.hstack((lidar_in_crowns.x, F_LAS_GROUND.x))-xmin
+                y = np.hstack((lidar_in_crowns.y, F_LAS_GROUND.y))-ymin
+                z = np.hstack((lidar_in_crowns.z, F_LAS_GROUND.z))-zmin
+            else :
+                comments=None
+                x = np.hstack((lidar_in_crowns.x, F_LAS_GROUND.x))
+                y = np.hstack((lidar_in_crowns.y, F_LAS_GROUND.y))
+                z = np.hstack((lidar_in_crowns.z, F_LAS_GROUND.z))
+
+            #put ground class value at 0
+            grd=np.zeros(np.asarray(F_LAS_GROUND.classif).shape)
+            
+            #save, +1 to shift tree classes to let 0 be grd
+            classification = np.hstack((lidar_tree_class+1, grd))
+            outfile="{}/{}".format(directory, tree_las_name)
+            ost.write_ply(filename=outfile, field_list=[x,y,z,classification], field_names=['x', 'y', 'z', 'class'], comments=comments)
+
 
         self.lidar_in_crowns = lidar_in_crowns
 
