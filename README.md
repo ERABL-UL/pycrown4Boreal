@@ -22,11 +22,11 @@ Zörner, J., Dymond, J.R., Shepherd, J.D., Wiser, S.K., Bunting, P., Jolly, B. (
 
 # Changes I have made to make it work on our data, which are 20x20 plots of boreal forest
 
-= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+= = = = = = = = = = == = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
-= = Adaptation de l'algorithme "PyCrown - Fast raster-based individual tree segmentation for LiDAR data" pour nos besoins = =
+= = Adaptation de l'algorithme "PyCrown - Fast raster-based individual tree segmentation for LiDAR data" = =
 
-= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+= = = = = = = = = = = = = = = = == = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
 LÉGENDE:
 
@@ -38,7 +38,7 @@ LÉGENDE:
  
  [def] Le terme qui suit est le nom de la fonction qui exécute les tâches listées
 
-= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
 [+] Tout mettre l'algorithme dans une for loop pour avoir la segmentation de chaque parcelle de 20x20 mètres;
 
