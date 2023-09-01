@@ -17,3 +17,6 @@ __pycache__
 *.zip
 *.tif
 *.tif*
+.idea*
+=*
+*.tar
